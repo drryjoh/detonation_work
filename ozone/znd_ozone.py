@@ -22,10 +22,8 @@ def get_znd_solution(P1, T1, X):
     gas1.TPX = T1,P1,q
 
     gas = PostShock_fr(cj_speed, P1, T1, q, mech_yaml)
-    print(gas.TP)
-    print(cj_speed)
 
-    out = zndsolve(gas,gas1,cj_speed,t_end=2e-4,max_step=0.0001,relTol=1e-8,advanced_output=True)
+    out = zndsolve(gas,gas1,cj_speed,t_end=2e-6,max_step=1e-3,relTol=1e-8,advanced_output=True)
 
 
     T = out['T']
@@ -51,9 +49,34 @@ def get_znd_solution(P1, T1, X):
     return cj_speed, x, T, P, U, P_stag, SPR
 
 def induction_location(x, T):
-    dTdx = np.diff(T)/np.diff(x)
-    idx  = np.argmin(np.abs(T - (T[0]+100)))
+    idx  = np.argmin(np.abs(T - (T[0] + 100)))
     return [x[idx], T[idx]]
+
+def get_induction_time_it(gas, T, p, X_string, time_resolution = 1e-9, n_steps = 10000):
+    gas.TPX = T, p, X_string
+    reactor = ct.IdealGasMoleReactor(gas)
+    network = ct.ReactorNet([reactor])
+    time = np.linspace(0, n_steps * time_resolution, n_steps)
+    
+    T_start =  T
+    for t in time:
+        network.advance(t)
+        if reactor.T-T_start>20: 
+            return [True, t, reactor.T]
+
+    return [False, 0, 0]
+
+def induction_location_2(T, p, X_string, u, mech_yaml = 'ffcm_h2_o3.yaml'):
+    gas = ct.Solution(mech_yaml)
+    p  *= 1.e3
+    [found, time, temperature] = get_induction_time_it(gas, T, p, X_string)
+
+    if found:
+        return [u[0] * time * 1000, temperature] #in mm
+    else:
+        exit("Did not find inflection point")
+
+    
 
 save_dir = ''
 prepare_plot(linewidth=1.5, fontsize=24, markersize=12)
@@ -76,59 +99,102 @@ T1 = 700
 
 # No ozone
 #O3:0.054949494949495
-n_znds = 10
-ozones = np.linspace(0, 1, n_znds)**2 * 0.054949494949495 * 2  
+n_znds = 50
+ozones = np.linspace(0, 1, n_znds)**1.5 * 0.054949494949495
+
 cjs = []
 cjs_O = []
+cjs_lean = []
+
 ls_O3 = []
 ls_O  = []
-for ozone in ozones:
+ls_lean = []
+
+plot_O = False
+plot_lean = False
+
+for k, ozone in enumerate(ozones):
+    print(f" Calculating {k+1}th znd solution, with O3 = {ozone}")
+
     cj, x, T, p, u, p_stage, spr = get_znd_solution(P1, T1, f"H2:0.68 O2:1 N2:3.76 O3:{ozone}")
     [x_ind, T_ind] = induction_location(x, T)
+    [x_ind, T_ind] = induction_location_2(T[0], p[0], f"H2:0.68 O2:1 N2:3.76 O3:{ozone}", u)
+
     ls_O3.append(x_ind)
     cjs.append(cj)
-
-    cj, x, T, p, u, p_stage, spr = get_znd_solution(P1, T1, f"H2:0.68 O2:1 N2:3.76 O:{ozone}")
-    [x_ind, T_ind] = induction_location(x, T)
-    ls_O.append(x_ind)
-    cjs_O.append(cj)
+    if plot_O:
+        cj, x, T, p, u, p_stage, spr = get_znd_solution(P1, T1, f"H2:0.68 O2:1 N2:3.76 O:{ozone}")
+        [x_ind, T_ind] = induction_location(x, T)
+        ls_O.append(x_ind)
+        cjs_O.append(cj)
+    if plot_lean:
+        cj, x, T, p, u, p_stage, spr = get_znd_solution(P1, T1, f"H2:0.68 O2:{1.0+ozone*2/3} N2:3.76 O:0")
+        [x_ind, T_ind] = induction_location(x, T)
+        ls_lean.append(x_ind)
+        cjs_lean.append(cj)
 
 
 # Convert to arrays if not already
 ls_O3 = np.array(ls_O3)
-ls_O = np.array(ls_O)
-
 cjs = np.array(cjs)
+
+
+ls_O = np.array(ls_O)
 cjs_O = np.array(cjs_O)
 
 ozone_ppm = ozones / 0.054949494949495 * 10000
 
-
-#reduction_O3 = ls_O3[0] / ls_O3[1:]
-#reduction_O = ls_O[0] / ls_O[1:]
-reduction_O3 = ls_O3
-reduction_O = ls_O
+#plot figure
 fig, ax1 = plt.subplots()
-plot_O = False
-ax1.plot(ozone_ppm, reduction_O3, 'o-', label="Induction Length")
-if plot_O:
-    ax1.plot(ozone_ppm, reduction_O, 'o-', label="Induction Length, O")
-#ax1.plot(ozone_ppm, cjs[1:]/cjs[0], 's-', label="CJ Velocity")
-#if plot_O:
-#    ax1.plot(ozone_ppm, cjs_O[1:]/cjs_O[0], 's-', label="CJ Velocity, O")
-#ax1.plot(ozone_ppm, np.ones_like(reduction_O3), '--')
-if plot_O:
-    name = ""
-else:
-    name = "O3 "
-ax1.set_xlabel(f"{name}Concentration (PPM)")
-if plot_O:
-    name  = "/O"
-else:
-    name = ""
-ax1.set_ylabel(f"Induction Length (mm)")
 
-ax1.set_xticks([0,1000, 10000, 20000])
-plt.legend()
+# Set distinct color cycles for ax1 and ax2
+colors_ax1 = plt.cm.tab10.colors[:2]
+colors_ax2 = plt.cm.tab10.colors[2:4]
+
+if plot_O:
+    l1 = ax1.plot(ozone_ppm, ls_O3, '-s', label="Induction Length, O3", color=colors_ax1[0])
+    l2 = ax1.plot(ozone_ppm, ls_O, '-d', label="Induction Length, O", color=colors_ax1[1])
+else:
+    l1 = ax1.plot(ozone_ppm, ls_O3, '-', label="Induction Length", color=colors_ax1[0])
+    l2 = []
+
+ax2 = ax1.twinx()
+
+if plot_O:
+    l3 = ax2.plot(ozone_ppm, cjs, "-o", label="CJ Velocity, O3", color=colors_ax2[0])
+    l4 = ax2.plot(ozone_ppm, cjs_O, "-^", label="CJ Velocity, O", color=colors_ax2[1])
+else:
+    l3 = ax2.plot(ozone_ppm, cjs, "-", label="CJ Velocity", color=colors_ax2[0])
+    l4 = []
+
+# Labels
+ax1.set_xlabel(f"{'O3 ' if not plot_O else ''}Concentration (PPM)")
+ax1.set_ylabel("Induction Length (mm)")
+ax2.set_ylabel("CJ Velocity")
+
+if plot_lean:
+    #l5 = ax1.plot(ozone_ppm, ls_lean, '-k', label="Induction Length, O2 increase")
+    l6 = ax2.plot(ozone_ppm, cjs_lean, "--k", label="CJ Velocity, O2 increase")
+    
+    
+
+# Combine and place legend
+lines = l1 + l2 + l3 + l4
+if plot_lean:
+    lines += l6
+labels = [line.get_label() for line in lines]
+ax1.legend(lines, labels, loc='upper center', ncol=2)
+
+ax1.set_xticks([0, 1000, 10000])
+ax1.set_ylim([0,1])
+ax2.set_ylim([cjs[0] - cjs[0]*0.002, cjs[0] + cjs[0]*0.1])
+ax2.set_yticks([cjs[0], cjs[0] + cjs[0]*0.05,cjs[0] + cjs[0]*0.1])
+ax2.set_yticklabels(["$u_{cj,0}$", "$1.05\\times u_{cj,0}$","$1.1\\times u_{cj,0}$"])
 plt.tight_layout()
+print(f"CJ Velocity PCT Change of O3 compared to none: {cjs[-1]/cjs[0]*100-100}%")
+print(f"Induction distance of O3 compared to none: {ls_O3[-1]/ls_O3[0]*100-100}%")
+
+if plot_O:
+    print(f"Induction distance of O compared to none:  {ls_O[-1]/ls_O3[0]*100-100}%")
+    print(f"CJ Velocity PCT Change of O compared to none:  {cjs_O[-1]/cjs_O[0]*100-100}%")
 plt.show()
