@@ -13,9 +13,9 @@ from ppplot import *
 
 
 
-def get_znd_solution(P1, T1, X):
+def get_znd_solution(P1, T1, X, name  = 'ffcm_h2_o3.yaml'):
     q = X
-    mech_yaml = 'ffcm_h2_o3.yaml'
+    mech_yaml = name
 
     cj_speed,R2,plot_data = CJspeed(P1,T1,q,mech_yaml,fullOutput=True)
     gas1 = ct.Solution(mech_yaml)
@@ -31,19 +31,10 @@ def get_znd_solution(P1, T1, X):
     P = out['P']
     U = out['U']
 
-    # Include pre-shock state
-
-    # breakpoint()
-
     P_stag = P*0.
-
-    # mm
     x *= 1.e3
-    # kPa
     P /= 1.e3
     P_stag /= 1.e3
-
-    # SPR
     SPR = P_stag/np.max(P_stag)
 
     return cj_speed, x, T, P, U, P_stag, SPR
@@ -66,8 +57,8 @@ def get_induction_time_it(gas, T, p, X_string, time_resolution = 1e-9, n_steps =
 
     return [False, 0, 0]
 
-def induction_location_2(T, p, X_string, u, mech_yaml = 'ffcm_h2_o3.yaml'):
-    gas = ct.Solution(mech_yaml)
+def induction_location_2(T, p, X_string, u, name = 'ffcm_h2_o3.yaml'):
+    gas = ct.Solution(name)
     p  *= 1.e3
     [found, time, temperature] = get_induction_time_it(gas, T, p, X_string)
 
@@ -96,48 +87,54 @@ style_03 = '-.'
 
 P1 = 100e3
 T1 = 700
-
-# No ozone
-#O3:0.054949494949495
-n_znds = 50
+n_znds = 30
 ozones = np.linspace(0, 1, n_znds)**1.5 * 0.054949494949495
 
 cjs = []
+cjs_full = []
 cjs_O = []
 cjs_lean = []
 
 ls_O3 = []
+ls_O3_full = []
 ls_O  = []
 ls_lean = []
 
 plot_O = False
 plot_lean = False
+plot_princeton = True
+diluent  = "N2:3.76"
 
 for k, ozone in enumerate(ozones):
     print(f" Calculating {k+1}th znd solution, with O3 = {ozone}")
-
-    cj, x, T, p, u, p_stage, spr = get_znd_solution(P1, T1, f"H2:0.68 O2:1 N2:3.76 O3:{ozone}")
-    [x_ind, T_ind] = induction_location(x, T)
-    [x_ind, T_ind] = induction_location_2(T[0], p[0], f"H2:0.68 O2:1 N2:3.76 O3:{ozone}", u)
+    cj, x, T, p, u, p_stage, spr = get_znd_solution(P1, T1, f"H2:0.68 O2:1 {diluent} O3:{ozone}")
+    [x_ind, T_ind] = induction_location_2(T[0], p[0], f"H2:0.68 O2:1 {diluent} O3:{ozone}", u)
 
     ls_O3.append(x_ind)
     cjs.append(cj)
     if plot_O:
-        cj, x, T, p, u, p_stage, spr = get_znd_solution(P1, T1, f"H2:0.68 O2:1 N2:3.76 O:{ozone}")
-        [x_ind, T_ind] = induction_location(x, T)
+        cj, x, T, p, u, p_stage, spr = get_znd_solution(P1, T1, f"H2:0.68 O2:1 {diluent} O:{ozone}")
+        [x_ind, T_ind] = induction_location_2(T[0], p[0], f"H2:0.68 O2:1 {diluent} O:{ozone}", u)
         ls_O.append(x_ind)
         cjs_O.append(cj)
     if plot_lean:
-        cj, x, T, p, u, p_stage, spr = get_znd_solution(P1, T1, f"H2:0.68 O2:{1.0+ozone*2/3} N2:3.76 O:0")
-        [x_ind, T_ind] = induction_location(x, T)
+        cj, x, T, p, u, p_stage, spr = get_znd_solution(P1, T1, f"H2:0.68 O2:{1.0+ozone*2/3} {diluent} O:0")
+        [x_ind, T_ind] = induction_location_2(T[0], p[0], f"H2:0.68 O2:{1.0+ozone*2/3} {diluent} O:0", u)
         ls_lean.append(x_ind)
         cjs_lean.append(cj)
+    if plot_princeton:
+        cj, x, T, p, u, p_stage, spr = get_znd_solution(P1, T1, f"H2:0.68 O2:1 {diluent} O3:{ozone}", name = "ffcm_h2_o3_full.yaml")
+        [x_ind, T_ind] = induction_location_2(T[0], p[0], f"H2:0.68 O2:1 {diluent} O3:{ozone}",u, name = "ffcm_h2_o3_full.yaml")
+        ls_O3_full.append(x_ind)
+        cjs_full.append(cj)       
 
 
 # Convert to arrays if not already
 ls_O3 = np.array(ls_O3)
 cjs = np.array(cjs)
 
+ls_O3_full = np.array(ls_O3_full)
+cjs_full = np.array(cjs)
 
 ls_O = np.array(ls_O)
 cjs_O = np.array(cjs_O)
@@ -146,8 +143,6 @@ ozone_ppm = ozones / 0.054949494949495 * 10000
 
 #plot figure
 fig, ax1 = plt.subplots()
-
-# Set distinct color cycles for ax1 and ax2
 colors_ax1 = plt.cm.tab10.colors[:2]
 colors_ax2 = plt.cm.tab10.colors[2:4]
 
@@ -155,7 +150,7 @@ if plot_O:
     l1 = ax1.plot(ozone_ppm, ls_O3, '-s', label="Induction Length, O3", color=colors_ax1[0])
     l2 = ax1.plot(ozone_ppm, ls_O, '-d', label="Induction Length, O", color=colors_ax1[1])
 else:
-    l1 = ax1.plot(ozone_ppm, ls_O3, '-', label="Induction Length", color=colors_ax1[0])
+    l1 = ax1.plot(ozone_ppm, ls_O3/ls_O3[0], '-', label="Induction Length", color=colors_ax1[0])
     l2 = []
 
 ax2 = ax1.twinx()
@@ -173,15 +168,16 @@ ax1.set_ylabel("Induction Length (mm)")
 ax2.set_ylabel("CJ Velocity")
 
 if plot_lean:
-    #l5 = ax1.plot(ozone_ppm, ls_lean, '-k', label="Induction Length, O2 increase")
     l6 = ax2.plot(ozone_ppm, cjs_lean, "--k", label="CJ Velocity, O2 increase")
     
-    
+if plot_princeton:
+    l7 = ax1.plot(ozone_ppm, ls_O3_full/ls_O3_full[0], 'ok', label="Induction Length, full")
 
-# Combine and place legend
 lines = l1 + l2 + l3 + l4
 if plot_lean:
     lines += l6
+if plot_princeton:
+    lines += l7
 labels = [line.get_label() for line in lines]
 ax1.legend(lines, labels, loc='upper center', ncol=2)
 
